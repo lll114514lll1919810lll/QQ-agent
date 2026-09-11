@@ -343,8 +343,14 @@ tr.quote-selected td { background: rgba(91,140,255,.10); }
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  /* 横向可滚；竖向必须 hidden——overflow-x:auto 会把 overflow-y 算成 auto，
+     Windows 上页签稍微高一点就冒出竖向滚动条 */
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
+#tabs::-webkit-scrollbar { height: 0; width: 0; }
 /* ⚠️ .tab 的基础定义必须完整写在这一处。
    曾经因为在别处又写了一条 `.tab { transition: ... }`，
    清理重复时被当成"旧版"删掉，页签变成浏览器默认按钮外观。
@@ -358,16 +364,18 @@ tr.quote-selected td { background: rgba(91,140,255,.10); }
   font-size: 13.5px;
   font-weight: 500;
   font-family: inherit;
+  /* 透明底边只占位，真正的选中下划线走 .tab.active::after（见动画区） */
   border-bottom: 2px solid transparent;
   border-radius: 6px 6px 0 0;
   margin-bottom: -1px;
   white-space: nowrap;
-  transition: color .14s ease, border-color .14s ease, background .14s ease;
+  position: relative;
+  transition: color var(--dur-base) var(--ease-in-out), background-color var(--dur-base) var(--ease-in-out);
 }
 .tab:hover { color: var(--text); background: var(--hover); }
+/* 选中态：只改文字色与底色，不再画 border-bottom——否则会和 ::after 动画条叠成两道蓝 */
 .tab.active {
   color: var(--accent);
-  border-bottom-color: var(--accent);
   background: var(--bg);
 }
 
@@ -756,11 +764,10 @@ tr.quote-selected td { background: rgba(91,140,255,.10); }
 /* 连接正常时不呼吸（静态更稳），只有异常态才动 —— 避免常态干扰 */
 
 /* 页签：切换时下划线滑动感（用 transform 而非 width，性能更好） */
-.tab { position: relative; }
 .tab.active::after {
   content: '';
   position: absolute;
-  left: 10px; right: 10px; bottom: -1px;
+  left: 10px; right: 10px; bottom: 0;
   height: 2px;
   background: var(--accent);
   border-radius: 2px;
@@ -808,13 +815,7 @@ tr.quote-selected td { background: rgba(91,140,255,.10); }
   box-shadow: 0 0 0 3px rgba(91, 140, 255, .12);
 }
 
-/* 页签：基础态过渡（.tab:hover 已有，这里补基础） */
-.tab {
-  transition:
-    color var(--dur-base) var(--ease-in-out),
-    background-color var(--dur-base) var(--ease-in-out),
-    border-color var(--dur-base) var(--ease-in-out);
-}
+/* 页签：基础态过渡已合并进上方 .tab 主规则，此处勿再单独写 .tab */
 
 /* 模型目录：左侧厂商 / 右侧模型条目，悬浮高亮 + 选中态。
    ⚠️ 过渡定义统一在下面的「长列表性能」块里，这里不要再写一份
