@@ -9,6 +9,7 @@ import { formatStickerList } from './stickers.js';
 import { validateImageUrl, safeFetchBinary } from './safe-fetch.js';
 import { webSearch, webFetch } from './web-search.js';
 import { expandForwardNodes } from './onebot.js';
+import { mediaToolDefs } from './media-skills.js';
 
 async function downloadImageAsDataUrl(url, timeoutMs = 30000) {
   const safeUrl = await validateImageUrl(url);
@@ -532,7 +533,9 @@ export function buildToolDefs() {
         ctx.session.finishReason = String(args.summary ?? '').slice(0, 300);
         return ok({ finished: true });
       }
-    }
+    },
+    // 媒体技能（B站 / 网易云）—— cookie 只在服务端 data/media/，模型看不到
+    ...mediaToolDefs()
   ];
 }
 

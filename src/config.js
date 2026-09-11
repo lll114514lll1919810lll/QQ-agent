@@ -105,6 +105,26 @@ export const DEFAULT_CONFIG = {
   voice: {
     enabled: true
   },
+  // 媒体技能（纯 Node 实现：bilibili / netease_music）
+  // 登录态只落 data/media/*.json，不进配置明文、不进模型上下文。
+  media: {
+    enabled: true,
+    rateLimit: {
+      perChatPerMinute: 6,
+      perChatPerHour: 30
+    },
+    bilibili: {
+      enabled: true,
+      timeoutMs: 20000,
+      maxOutputChars: 3500
+    },
+    netease: {
+      enabled: true,
+      apiBase: 'https://ncm-api.vercel.app',
+      timeoutMs: 30000,
+      maxOutputChars: 3000
+    }
+  },
   // 安全例外（默认全部关闭）
   security: {
     allowPrivateImageHosts: false           // true 时图片下载允许内网地址（仅本地测试/自建图床）

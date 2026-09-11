@@ -19,6 +19,7 @@ import { listModels, chatCompletion, resolveApiKey, estimateCost, cacheHitRate }
 import { resolveOfficialPrice, listOfficialPrices, isPeakHour, priceAt, resolveModelPrice, modelLabel, splitModelLabel, UNKNOWN_VENDOR } from './model-prices.js';
 import { initPriceFeed, refreshPriceFeed, priceFeedStatus } from './price-feed.js';
 import { startTelemetryLoop } from './telemetry.js';
+import { mediaSkillStatus, testMediaSkill, saveBilibiliCookie, clearBilibiliCookie } from './media-skills.js';
 import { importFromDsh, currentProviders, setProviderKey, testAllProviders, testOneProvider, testModelChat, fetchModelsFrom, upsertProvider, addModelsToProvider, removeModelFromProvider } from './providers.js';
 import { scanModelsVision, visionResults, modelImageVerdict } from './vision-scan.js';
 import { builtinVisionResults } from './model-vision-docs.js';
@@ -1153,6 +1154,43 @@ export function createApp({ log = console.log } = {}) {
             result: { ok: false, note: String(error?.message ?? error), latencyMs: Date.now() - startedAt }
           });
         }
+      }
+
+      // ── 媒体技能（B站/网易云）──
+      if (pathname === '/api/media/status' && method === 'GET') {
+        try {
+          return json(res, 200, { ok: true, status: await mediaSkillStatus() });
+        } catch (error) {
+          return json(res, 200, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+
+      if (pathname === '/api/media/test' && method === 'POST') {
+        const body = await readBody(req).catch(() => ({}));
+        const skill = String(body?.skill ?? 'bilibili');
+        if (!['bilibili', 'netease'].includes(skill)) return json(res, 400, { ok: false, error: '未知技能' });
+        try {
+          return json(res, 200, { ok: true, result: await testMediaSkill(skill) });
+        } catch (error) {
+          return json(res, 200, { ok: true, result: { ok: false, error: String(error?.message ?? error) } });
+        }
+      }
+
+      // 保存 B 站 cookie → data/media/bilibili-cookies.json（明文不回前端）
+      if (pathname === '/api/media/bilibili-cookie' && method === 'POST') {
+        if (!keyEndpointAllowed(req)) return json(res, 403, { ok: false, error: '禁止从外部页面写入凭据' });
+        const body = await readBody(req).catch(() => ({}));
+        try {
+          const r = saveBilibiliCookie(body?.cookie);
+          return json(res, 200, { ok: true, keys: r.keys });
+        } catch (error) {
+          return json(res, 400, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+
+      if (pathname === '/api/media/bilibili-cookie' && method === 'DELETE') {
+        clearBilibiliCookie();
+        return json(res, 200, { ok: true });
       }
 
       if (pathname === '/api/test/api' && method === 'POST') {

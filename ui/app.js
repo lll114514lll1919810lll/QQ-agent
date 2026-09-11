@@ -308,8 +308,11 @@ function renderBanner() {
   const s = state.status;
   let show = false;
   let html = '';
-  // 预算保险丝已移除：原先这里有一个 pauseReason === 'budget' 的分支
-  if (state.paused) {
+  // 预算保险丝：超限自动暂停
+  if (state.paused && s?.orchestrator?.pauseReason === 'budget') {
+    show = true;
+    html = '💰 今日成本已达预算上限，机器人已自动暂停。到「模型 API → 预算保险丝」调高上限后点恢复。';
+  } else if (state.paused) {
     show = true;
     html = '⏸ 机器人已暂停，不会处理任何消息。';
   } else if (s && !s.onebot.connected && !s.onebot.everConnected) {
@@ -2654,6 +2657,7 @@ function renderSettingsSidebar() {
     ['persona', '人设'],
     ['allow', '聊天白名单'],
     ['chat', '聊天设置'],
+    ['media', '媒体技能'],
     ['desktop', '桌面端'],
     ['onebot', 'OneBot（SnowLuma）']
   ];
@@ -2702,6 +2706,7 @@ function renderSettingsSection(c) {
     persona: () => renderPersonaSection(c),
     allow: () => renderAllowSection(c),
     chat: () => renderChatSection(c),
+    media: () => renderMediaSection(c),
     desktop: () => renderDesktopSection(c),
     onebot: () => renderOnebotSection(c)
   };
@@ -2749,6 +2754,8 @@ function renderApiSection(c) {
     <div class="checkbox-row"><input type="checkbox" id="cfg-vision" ${c.api.vision !== false ? 'checked' : ''} />
       <label for="cfg-vision">图片输入（关闭则移除看图工具，模型只会看到 [图片] 占位符）</label>
       <span id="vision-switch-hint" class="muted" style="font-size:12px;align-self:center"></span></div>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-thinking" ${c.api.thinking !== false ? 'checked' : ''} />
+      <label for="cfg-thinking">模型思考（关闭后请求带 enable_thinking=false，不展示思维链，更省 token）</label></div>
     <div class="settings-divider"></div>
 
     <h3>成本核算</h3>
@@ -2784,6 +2791,12 @@ function renderApiSection(c) {
     <div style="display:flex;gap:8px;margin:8px 0">
       <button class="btn btn-small" id="batch-price-btn">批量自定义价格编辑</button>
       <span class="muted" style="font-size:12px;align-self:center">为多个模型分别设定单价</span>
+    </div>
+
+    <h3>预算保险丝</h3>
+    <div class="field"><label>今日成本上限（元，0 = 不限制）</label>
+      <input type="number" id="cfg-budget" step="0.1" min="0" value="${esc(c.budget?.dailyCostYuan ?? 0)}" />
+      <div class="hint">按官方价/自填单价估算；达到上限后自动暂停，调高并保存后可一键恢复。</div>
     </div>
 
     <div class="settings-divider"></div>
@@ -2933,6 +2946,13 @@ function renderMemorySettingsSection(c) {
 }
 
 function renderPersonaSection(c) {
+  const overrides = c.chatPersonas || {};
+  const chatKeys = [
+    ...(c.allow?.groups || []).map((g) => `group:${g}`),
+    ...(c.allow?.private || []).map((p) => `private:${p}`)
+  ];
+  const selected = state.chatPersonaEditKey || chatKeys[0] || '';
+  const ov = selected ? (overrides[selected] || {}) : {};
   return `
     <h3>人设</h3>
     ${renderPersonaPicker(c)}
@@ -2950,7 +2970,81 @@ function renderPersonaSection(c) {
       <textarea id="cfg-roletext" class="persona-role-text" placeholder="例如：你是运维群里的老油条……">${esc(c.persona.roleText || '')}</textarea></div>
     <div class="field"><label>管理员附加规则（可选，追加到系统提示）</label>
       <textarea id="cfg-customrules" class="persona-role-text" style="min-height:100px">${esc(c.persona.customRules || '')}</textarea></div>
-    ${renderPersonaSaveBar()}`;
+    ${renderPersonaSaveBar()}
+
+    <div class="settings-divider"></div>
+    <h3>分会话人设覆盖</h3>
+    <div class="hint" style="margin-bottom:8px">给某个群/私聊单独换名字、参与度或角色设定；留空的字段跟随上方全局人设。</div>
+    <div class="field"><label>选择会话</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <select id="cfg-chatpersona-key" style="min-width:220px">
+          ${(chatKeys.length ? chatKeys : ['（请先配置白名单）']).map((k) =>
+            `<option value="${esc(k)}" ${k === selected ? 'selected' : ''}>${esc(k)}${overrides[k] ? ' · 已覆盖' : ''}</option>`
+          ).join('')}
+        </select>
+        <button class="btn btn-small" id="chatpersona-load-btn">载入</button>
+        <button class="btn btn-small btn-danger" id="chatpersona-clear-btn">清除该会话覆盖</button>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>覆盖名字（可选）</label><input type="text" id="cfg-cp-botname" value="${esc(ov.botName || '')}" placeholder="留空=全局" /></div>
+      <div class="field"><label>覆盖展示名（可选）</label><input type="text" id="cfg-cp-selfnick" value="${esc(ov.selfNickname || '')}" placeholder="留空=全局" /></div>
+      <div class="field"><label>覆盖参与度</label>
+        <select id="cfg-cp-participation">
+          <option value="" ${!ov.participation ? 'selected' : ''}>跟随全局</option>
+          <option value="low" ${ov.participation === 'low' ? 'selected' : ''}>安静型</option>
+          <option value="medium" ${ov.participation === 'medium' ? 'selected' : ''}>普通群友</option>
+          <option value="high" ${ov.participation === 'high' ? 'selected' : ''}>活跃型</option>
+        </select></div>
+    </div>
+    <div class="field"><label>覆盖角色设定（可选）</label>
+      <textarea id="cfg-cp-roletext" class="persona-role-text" placeholder="留空=全局角色设定">${esc(ov.roleText || '')}</textarea></div>
+    <div class="field"><label>覆盖附加规则（可选）</label>
+      <textarea id="cfg-cp-rules" class="persona-role-text" style="min-height:80px">${esc(ov.customRules || '')}</textarea></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary btn-small" id="chatpersona-save-btn">保存该会话覆盖</button>
+      <span id="chatpersona-hint" class="muted" style="align-self:center"></span>
+    </div>`;
+}
+
+function renderMediaSection(c) {
+  const m = c.media || {};
+  return `
+    <h3 id="settings-media">媒体技能（B站 / 网易云）</h3>
+    <div class="hint" style="margin-bottom:10px">
+      纯 Node 实现，无需 Python。B 站登录态只保存在本机 <code>data/media/bilibili-cookies.json</code>，
+      不会进入配置接口、不会发给模型。网易云走公开接口，不发 cookie。
+    </div>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-media-enabled" ${m.enabled !== false ? 'checked' : ''} />
+      <label for="cfg-media-enabled">启用媒体技能工具（bilibili / netease_music）</label></div>
+    <div class="field-row">
+      <div class="field"><label>同会话每分钟限次</label><input type="number" id="cfg-media-rpm" min="1" value="${esc(m.rateLimit?.perChatPerMinute ?? 6)}" /></div>
+      <div class="field"><label>同会话每小时限次</label><input type="number" id="cfg-media-rph" min="1" value="${esc(m.rateLimit?.perChatPerHour ?? 30)}" /></div>
+    </div>
+
+    <h3>B 站</h3>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-media-bili" ${m.bilibili?.enabled !== false ? 'checked' : ''} />
+      <label for="cfg-media-bili">启用 B 站工具</label></div>
+    <div class="field"><label>粘贴 Cookie（JSON 或 SESSDATA=...; bili_jct=...）</label>
+      <textarea id="cfg-media-bili-cookie" class="persona-role-text" style="min-height:80px" placeholder='{"SESSDATA":"...","bili_jct":"...","DedeUserID":"..."}'></textarea>
+      <div class="hint">保存后写入 data/media/，不回显明文。可从浏览器 F12 → Application → Cookies 复制。</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-small btn-primary" id="media-bili-cookie-save">保存 Cookie</button>
+      <button class="btn btn-small btn-danger" id="media-bili-cookie-clear">清除 Cookie</button>
+      <button class="btn btn-small" id="media-test-bili">测试 B 站</button>
+      <button class="btn btn-small" id="media-test-ncm">测试网易云</button>
+      <span id="media-test-result" class="muted" style="font-size:12px"></span>
+    </div>
+    <div class="hint" id="media-status-line" style="margin-top:8px">正在读取状态…</div>
+
+    <h3>网易云音乐</h3>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-media-ncm" ${m.netease?.enabled !== false ? 'checked' : ''} />
+      <label for="cfg-media-ncm">启用网易云工具</label></div>
+    <div class="field"><label>NeteaseCloudMusicApi 服务地址</label>
+      <input type="text" id="cfg-media-ncm-base" value="${esc(m.netease?.apiBase || 'https://ncm-api.vercel.app')}" />
+      <div class="hint">可换成自建/本地服务（如 http://127.0.0.1:3000）。默认公开服务可能不稳定。</div>
+    </div>`;
 }
 
 function renderAllowSection(c) {
@@ -3092,6 +3186,14 @@ return `
       <div class="field"><label>按字数附加间隔（毫秒/字）</label><input type="number" id="cfg-bylength" min="0" value="${esc(c.send.byLengthMs ?? 20)}" /></div>
       <div class="field"><label>QQ 硬限制切分长度（0 = 不切）</label><input type="number" id="cfg-hardsplit" min="0" value="${esc(c.send.hardSplitAt ?? 4000)}" /></div>
     </div>
+    <div class="field"><label>禁言/风控熔断时长（分钟）</label>
+      <input type="number" id="cfg-ban-cooldown-min" min="1" value="${esc(Math.round((c.send?.banCooldownMs ?? 1800000) / 60000))}" />
+      <div class="hint">QQ 返回禁言/风控错误时，该会话暂停发送这段时间，避免反复撞墙。</div>
+    </div>
+
+    <h3>语音转文字</h3>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-voice" ${c.voice?.enabled !== false ? 'checked' : ''} />
+      <label for="cfg-voice">启用 get_voice_text（走 QQ 自带识别，按需转写）</label></div>
 
     <h3>主动开话题</h3>
     <div class="checkbox-row"><input type="checkbox" id="cfg-proactive" ${c.proactive.enabled ? 'checked' : ''} />
@@ -3254,6 +3356,123 @@ function bindSettingsEvents(c) {
       startListPoller();   // 刷新间隔可能刚被改过，用新值重启轮询
     } catch (e) {
       $('#cfg-save-result').textContent = `保存失败：${e.message}`;
+    }
+  });
+
+  // ── 媒体技能 ──
+  const mediaStatusLine = $('#media-status-line');
+  if (mediaStatusLine) {
+    api('/api/media/status').then((j) => {
+      const st = j?.status;
+      if (!st) { mediaStatusLine.textContent = '状态读取失败'; return; }
+      const bili = st.bilibili || {};
+      mediaStatusLine.textContent =
+        `运行时：${st.runtime} · B站 Cookie：${bili.hasCookie ? `已配置（${(bili.cookieKeys || []).join(', ')}）` : '未配置'} · 网易云：${st.netease?.apiBase || '-'}`;
+    }).catch(() => { mediaStatusLine.textContent = '状态读取失败'; });
+  }
+  const mediaBiliSave = $('#media-bili-cookie-save');
+  if (mediaBiliSave) mediaBiliSave.addEventListener('click', async () => {
+    const cookie = $('#cfg-media-bili-cookie')?.value || '';
+    const hint = $('#media-test-result');
+    try {
+      const j = await api('/api/media/bilibili-cookie', {
+        method: 'POST',
+        body: JSON.stringify({ cookie })
+      });
+      if (!j.ok) throw new Error(j.error || '保存失败');
+      if (hint) hint.textContent = `已保存 Cookie（${(j.keys || []).join(', ')}）`;
+      const ta = $('#cfg-media-bili-cookie');
+      if (ta) ta.value = '';
+    } catch (e) {
+      if (hint) hint.textContent = `保存失败：${e.message}`;
+    }
+  });
+  const mediaBiliClear = $('#media-bili-cookie-clear');
+  if (mediaBiliClear) mediaBiliClear.addEventListener('click', async () => {
+    await api('/api/media/bilibili-cookie', { method: 'DELETE' });
+    const hint = $('#media-test-result');
+    if (hint) hint.textContent = '已清除 Cookie';
+  });
+  for (const [btnId, skill] of [['media-test-bili', 'bilibili'], ['media-test-ncm', 'netease']]) {
+    const btn = $('#' + btnId);
+    if (!btn) continue;
+    btn.addEventListener('click', async () => {
+      const hint = $('#media-test-result');
+      if (hint) hint.textContent = '测试中…';
+      try {
+        const j = await api('/api/media/test', {
+          method: 'POST',
+          body: JSON.stringify({ skill })
+        });
+        const t = j?.result || {};
+        if (hint) hint.textContent = t.ok ? `${skill} OK（${t.ms}ms）\n${String(t.preview || '').slice(0, 120)}` : `${skill} 失败：${t.error || t.preview || '未知'}`;
+      } catch (e) {
+        if (hint) hint.textContent = `测试失败：${e.message}`;
+      }
+    });
+  }
+
+  // ── 分会话人设 ──
+  const cpLoad = $('#chatpersona-load-btn');
+  if (cpLoad) cpLoad.addEventListener('click', () => {
+    const key = $('#cfg-chatpersona-key')?.value;
+    state.chatPersonaEditKey = key;
+    renderSettings();
+  });
+  const cpSave = $('#chatpersona-save-btn');
+  if (cpSave) cpSave.addEventListener('click', async () => {
+    const key = $('#cfg-chatpersona-key')?.value;
+    if (!key || key.startsWith('（')) {
+      const h = $('#chatpersona-hint');
+      if (h) h.textContent = '请先配置白名单并选择会话';
+      return;
+    }
+    const next = { ...(state.config?.chatPersonas || {}) };
+    const entry = {};
+    const botName = ($('#cfg-cp-botname')?.value || '').trim();
+    const selfNick = ($('#cfg-cp-selfnick')?.value || '').trim();
+    const part = $('#cfg-cp-participation')?.value || '';
+    const role = $('#cfg-cp-roletext')?.value || '';
+    const rules = $('#cfg-cp-rules')?.value || '';
+    if (botName) entry.botName = botName;
+    if (selfNick) entry.selfNickname = selfNick;
+    if (part) entry.participation = part;
+    if (role.trim()) entry.roleText = role;
+    if (rules.trim()) entry.customRules = rules;
+    if (!Object.keys(entry).length) delete next[key];
+    else next[key] = entry;
+    try {
+      const j = await api('/api/config', {
+        method: 'POST',
+        body: JSON.stringify({ chatPersonas: next })
+      });
+      state.config = j.config || state.config;
+      const h = $('#chatpersona-hint');
+      if (h) h.textContent = Object.keys(entry).length ? '已保存覆盖 ✓' : '已清除覆盖 ✓';
+      renderSettings();
+    } catch (e) {
+      const h = $('#chatpersona-hint');
+      if (h) h.textContent = `失败：${e.message}`;
+    }
+  });
+  const cpClear = $('#chatpersona-clear-btn');
+  if (cpClear) cpClear.addEventListener('click', async () => {
+    const key = $('#cfg-chatpersona-key')?.value;
+    if (!key || key.startsWith('（')) return;
+    const next = { ...(state.config?.chatPersonas || {}) };
+    delete next[key];
+    try {
+      const j = await api('/api/config', {
+        method: 'POST',
+        body: JSON.stringify({ chatPersonas: next })
+      });
+      state.config = j.config || state.config;
+      const h = $('#chatpersona-hint');
+      if (h) h.textContent = '已清除覆盖 ✓';
+      renderSettings();
+    } catch (e) {
+      const h = $('#chatpersona-hint');
+      if (h) h.textContent = `失败：${e.message}`;
     }
   });
 
@@ -4451,6 +4670,7 @@ async function saveConfig({ quiet = false } = {}) {
   if (sec === 'api') {
     patch.api = {
       vision: chk('#cfg-vision', c.api.vision !== false),
+      thinking: chk('#cfg-thinking', c.api.thinking !== false),
       temperature: Number(val('#cfg-temperature', c.api.temperature)) || 0.8,
       maxRounds: Number(val('#cfg-maxrounds', c.api.maxRounds)) || 12,
       // 成本核算：官方价开关（走中转站时通常要关掉开关自己填）
@@ -4461,6 +4681,10 @@ async function saveConfig({ quiet = false } = {}) {
       priceInputPerM: Number(val('#cfg-price-in', c.api.priceInputPerM ?? 0)) || 0,
       priceOutputPerM: Number(val('#cfg-price-out', c.api.priceOutputPerM ?? 0)) || 0,
       priceCachedPerM: Number(val('#cfg-price-cached', c.api.priceCachedPerM ?? 0)) || 0
+    };
+    patch.budget = {
+      ...(c.budget || {}),
+      dailyCostYuan: Math.max(0, Number(val('#cfg-budget', c.budget?.dailyCostYuan ?? 0)) || 0)
     };
     // 把当前模型的单价存进 modelPrices[模型]（只影响这一个模型，不动内置官方表）。
     // 若开关是打开的，则不应写入 —— 那时输入框是禁用的，读到的值就是官方价，
@@ -4578,7 +4802,12 @@ async function saveConfig({ quiet = false } = {}) {
       maxPerMinute: Number(val('#cfg-maxpermin', c.send?.maxPerMinute)) || 80,
       maxPerHour: Number(val('#cfg-maxperhour', c.send?.maxPerHour)) || 500,
       byLengthMs: Number(val('#cfg-bylength', c.send?.byLengthMs)) || 20,
+      banCooldownMs: Math.max(60000, (Number(val('#cfg-ban-cooldown-min', Math.round((c.send?.banCooldownMs ?? 1800000) / 60000)) || 30) * 60000)),
       hardSplitAt: Number(val('#cfg-hardsplit', c.send?.hardSplitAt)) || 0
+    };
+    patch.voice = {
+      ...(c.voice || {}),
+      enabled: chk('#cfg-voice', c.voice?.enabled !== false)
     };
     patch.proactive = {
       ...c.proactive,
@@ -4632,6 +4861,26 @@ async function saveConfig({ quiet = false } = {}) {
     // 清掉已废弃的两个字段，避免残留配置误导后来读代码的人
     delete patch.store.pastStateLimit;
     delete patch.store.pastStateMaxChars;
+  }
+
+  if (sec === 'media') {
+    patch.media = {
+      ...(c.media || {}),
+      enabled: chk('#cfg-media-enabled', c.media?.enabled !== false),
+      rateLimit: {
+        perChatPerMinute: Math.max(1, Number(val('#cfg-media-rpm', c.media?.rateLimit?.perChatPerMinute ?? 6)) || 6),
+        perChatPerHour: Math.max(1, Number(val('#cfg-media-rph', c.media?.rateLimit?.perChatPerHour ?? 30)) || 30)
+      },
+      bilibili: {
+        ...(c.media?.bilibili || {}),
+        enabled: chk('#cfg-media-bili', c.media?.bilibili?.enabled !== false)
+      },
+      netease: {
+        ...(c.media?.netease || {}),
+        enabled: chk('#cfg-media-ncm', c.media?.netease?.enabled !== false),
+        apiBase: val('#cfg-media-ncm-base', c.media?.netease?.apiBase || 'https://ncm-api.vercel.app').trim()
+      }
+    };
   }
 
   if (sec === 'desktop') {
