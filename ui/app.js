@@ -3010,41 +3010,55 @@ function renderPersonaSection(c) {
 function renderMediaSection(c) {
   const m = c.media || {};
   return `
-    <h3 id="settings-media">媒体技能（B站 / 网易云）</h3>
+    <h3 id="settings-media">媒体技能</h3>
     <div class="hint" style="margin-bottom:10px">
       纯 Node 实现，无需 Python。B 站登录态只保存在本机 <code>data/media/bilibili-cookies.json</code>，
       不会进入配置接口、不会发给模型。网易云走公开接口，不发 cookie。
     </div>
+
     <div class="checkbox-row"><input type="checkbox" id="cfg-media-enabled" ${m.enabled !== false ? 'checked' : ''} />
       <label for="cfg-media-enabled">启用媒体技能工具（bilibili / netease_music）</label></div>
     <div class="field-row">
       <div class="field"><label>同会话每分钟限次</label><input type="number" id="cfg-media-rpm" min="1" value="${esc(m.rateLimit?.perChatPerMinute ?? 6)}" /></div>
       <div class="field"><label>同会话每小时限次</label><input type="number" id="cfg-media-rph" min="1" value="${esc(m.rateLimit?.perChatPerHour ?? 30)}" /></div>
     </div>
+    <div class="hint" id="media-overall-status" style="margin-top:4px">正在读取状态…</div>
+
+    <div class="settings-divider"></div>
 
     <h3>B 站</h3>
     <div class="checkbox-row"><input type="checkbox" id="cfg-media-bili" ${m.bilibili?.enabled !== false ? 'checked' : ''} />
-      <label for="cfg-media-bili">启用 B 站工具</label></div>
-    <div class="field"><label>粘贴 Cookie（JSON 或 SESSDATA=...; bili_jct=...）</label>
+      <label for="cfg-media-bili">启用 B 站工具（hot / search / info / summary / comments …）</label></div>
+    <div class="field"><label>Cookie（JSON 或 SESSDATA=...; bili_jct=...）</label>
       <textarea id="cfg-media-bili-cookie" class="persona-role-text" style="min-height:80px" placeholder='{"SESSDATA":"...","bili_jct":"...","DedeUserID":"..."}'></textarea>
-      <div class="hint">保存后写入 data/media/，不回显明文。可从浏览器 F12 → Application → Cookies 复制。</div>
+      <div class="hint">保存后写入 data/media/，不回显明文。浏览器 F12 → Application → Cookies 复制。</div>
+    </div>
+    <div class="field"><label>登录态</label>
+      <div class="hint" id="media-bili-status">正在读取…</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-small btn-primary" id="media-bili-cookie-save">保存 Cookie</button>
       <button class="btn btn-small btn-danger" id="media-bili-cookie-clear">清除 Cookie</button>
-      <button class="btn btn-small" id="media-test-bili">测试 B 站</button>
-      <button class="btn btn-small" id="media-test-ncm">测试网易云</button>
-      <span id="media-test-result" class="muted" style="font-size:12px"></span>
+      <button class="btn btn-small" id="media-test-bili">测试连通</button>
     </div>
-    <div class="hint" id="media-status-line" style="margin-top:8px">正在读取状态…</div>
+    <div class="hint" id="media-bili-result" style="margin-top:8px;white-space:pre-wrap"></div>
+
+    <div class="settings-divider"></div>
 
     <h3>网易云音乐</h3>
     <div class="checkbox-row"><input type="checkbox" id="cfg-media-ncm" ${m.netease?.enabled !== false ? 'checked' : ''} />
-      <label for="cfg-media-ncm">启用网易云工具</label></div>
+      <label for="cfg-media-ncm">启用网易云工具（search / song / lyric / playlist …）</label></div>
     <div class="field"><label>NeteaseCloudMusicApi 服务地址</label>
       <input type="text" id="cfg-media-ncm-base" value="${esc(m.netease?.apiBase || 'https://ncm-api.vercel.app')}" />
       <div class="hint">可换成自建/本地服务（如 http://127.0.0.1:3000）。默认公开服务可能不稳定。</div>
-    </div>`;
+    </div>
+    <div class="field"><label>当前端点</label>
+      <div class="hint" id="media-ncm-status">正在读取…</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-small" id="media-test-ncm">测试连通</button>
+    </div>
+    <div class="hint" id="media-ncm-result" style="margin-top:8px;white-space:pre-wrap"></div>`;
 }
 
 function renderAllowSection(c) {
@@ -3360,20 +3374,30 @@ function bindSettingsEvents(c) {
   });
 
   // ── 媒体技能 ──
-  const mediaStatusLine = $('#media-status-line');
-  if (mediaStatusLine) {
+  const mediaOverall = $('#media-overall-status');
+  if (mediaOverall) {
     api('/api/media/status').then((j) => {
       const st = j?.status;
-      if (!st) { mediaStatusLine.textContent = '状态读取失败'; return; }
+      if (!st) { mediaOverall.textContent = '状态读取失败'; return; }
       const bili = st.bilibili || {};
-      mediaStatusLine.textContent =
-        `运行时：${st.runtime} · B站 Cookie：${bili.hasCookie ? `已配置（${(bili.cookieKeys || []).join(', ')}）` : '未配置'} · 网易云：${st.netease?.apiBase || '-'}`;
-    }).catch(() => { mediaStatusLine.textContent = '状态读取失败'; });
+      const ncm = st.netease || {};
+      mediaOverall.textContent = `运行时：${st.runtime} · 总开关：${st.enabled !== false ? '开' : '关'}`;
+      const biliLine = $('#media-bili-status');
+      if (biliLine) {
+        biliLine.textContent = bili.hasCookie
+          ? `已配置（${(bili.cookieKeys || []).join(', ')}）`
+          : '未配置 Cookie —— 热搜/排行/搜索可匿名；AI 摘要等需要登录态';
+      }
+      const ncmLine = $('#media-ncm-status');
+      if (ncmLine) ncmLine.textContent = ncm.apiBase || '-';
+    }).catch(() => {
+      if (mediaOverall) mediaOverall.textContent = '状态读取失败';
+    });
   }
   const mediaBiliSave = $('#media-bili-cookie-save');
   if (mediaBiliSave) mediaBiliSave.addEventListener('click', async () => {
     const cookie = $('#cfg-media-bili-cookie')?.value || '';
-    const hint = $('#media-test-result');
+    const hint = $('#media-bili-result');
     try {
       const j = await api('/api/media/bilibili-cookie', {
         method: 'POST',
@@ -3383,6 +3407,8 @@ function bindSettingsEvents(c) {
       if (hint) hint.textContent = `已保存 Cookie（${(j.keys || []).join(', ')}）`;
       const ta = $('#cfg-media-bili-cookie');
       if (ta) ta.value = '';
+      const biliLine = $('#media-bili-status');
+      if (biliLine) biliLine.textContent = `已配置（${(j.keys || []).join(', ')}）`;
     } catch (e) {
       if (hint) hint.textContent = `保存失败：${e.message}`;
     }
@@ -3390,14 +3416,19 @@ function bindSettingsEvents(c) {
   const mediaBiliClear = $('#media-bili-cookie-clear');
   if (mediaBiliClear) mediaBiliClear.addEventListener('click', async () => {
     await api('/api/media/bilibili-cookie', { method: 'DELETE' });
-    const hint = $('#media-test-result');
+    const hint = $('#media-bili-result');
     if (hint) hint.textContent = '已清除 Cookie';
+    const biliLine = $('#media-bili-status');
+    if (biliLine) biliLine.textContent = '未配置 Cookie';
   });
-  for (const [btnId, skill] of [['media-test-bili', 'bilibili'], ['media-test-ncm', 'netease']]) {
+  for (const [btnId, skill, resultId] of [
+    ['media-test-bili', 'bilibili', 'media-bili-result'],
+    ['media-test-ncm', 'netease', 'media-ncm-result']
+  ]) {
     const btn = $('#' + btnId);
     if (!btn) continue;
     btn.addEventListener('click', async () => {
-      const hint = $('#media-test-result');
+      const hint = $('#' + resultId);
       if (hint) hint.textContent = '测试中…';
       try {
         const j = await api('/api/media/test', {
@@ -3405,7 +3436,12 @@ function bindSettingsEvents(c) {
           body: JSON.stringify({ skill })
         });
         const t = j?.result || {};
-        if (hint) hint.textContent = t.ok ? `${skill} OK（${t.ms}ms）\n${String(t.preview || '').slice(0, 120)}` : `${skill} 失败：${t.error || t.preview || '未知'}`;
+        if (!hint) return;
+        if (t.ok) {
+          hint.textContent = `连通 OK（${t.ms}ms）\n${String(t.preview || '').slice(0, 160)}`;
+        } else {
+          hint.textContent = `失败：${t.error || t.preview || '未知'}`;
+        }
       } catch (e) {
         if (hint) hint.textContent = `测试失败：${e.message}`;
       }
