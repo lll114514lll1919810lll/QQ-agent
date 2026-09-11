@@ -2,9 +2,34 @@
 // （原版经 @snowluma/sdk 收事件；这里直接实现标准 OneBot v11，去掉 SDK 补丁依赖。）
 import WebSocket from 'ws';
 import { sanitizeUserText, escapeCqText } from './util.js';
+import { formatQqFace, resolveQqFaceId } from './qq-faces.js';
 
 const RECONNECT_MIN_MS = 3000;
 const RECONNECT_MAX_MS = 30000;
+
+/** 把文本里的 QQ 官方表情标记拆成 text/face 混合段，供同一条消息混排使用。 */
+function textToMessageSegments(text) {
+  const raw = String(text ?? '');
+  const segments = [];
+  const markerRe = /\[QQ表情:([^\]\n]+?)\]|\[表情(\d+)\]|\[CQ:face,id=(\d+)\]/gi;
+  let last = 0;
+  let m;
+  while ((m = markerRe.exec(raw))) {
+    if (m.index > last) segments.push({ type: 'text', data: { text: escapeCqText(raw.slice(last, m.index)) } });
+    const ref = m[1] ?? m[2] ?? m[3] ?? '';
+    const id = resolveQqFaceId(ref);
+    if (id) {
+      segments.push({ type: 'face', data: { id: Number(id) } });
+    } else {
+      // 解析不到就原样当普通文本，避免把用户/模型写的未知标记吞掉
+      segments.push({ type: 'text', data: { text: escapeCqText(m[0]) } });
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < raw.length) segments.push({ type: 'text', data: { text: escapeCqText(raw.slice(last)) } });
+  if (!segments.length) segments.push({ type: 'text', data: { text: '' } });
+  return segments;
+}
 
 export class OneBotClient {
   constructor({ wsUrl, httpUrl, accessToken, httpToken, onEvent }) {
@@ -167,7 +192,7 @@ export class OneBotClient {
       if (!/^\d+$/.test(at)) throw new Error('atUserId 必须是正整数 QQ 号，且不能为 all');
       segments.push({ type: 'at', data: { qq: at } });
     }
-    segments.push({ type: 'text', data: { text: escapeCqText(String(text ?? '')) } });
+    segments.push(...textToMessageSegments(text));
     return this.sendSegments(kind, id, segments);
   }
 
@@ -200,6 +225,14 @@ export class OneBotClient {
     return this.call('get_msg', { message_id: Number(messageId) });
   }
 
+  /**
+   * 语音转文字（QQ 自带识别，走 SnowLuma 的 fetch_ptt_text / get_ptt_text / get_record_text）。
+   * 返回 { text }。部分语音（如 QQ 未识别、老语音、时长过长）可能没有转写结果。
+   */
+  async getVoiceText(messageId) {
+    return this.call('fetch_ptt_text', { message_id: String(messageId) });
+  }
+
   async getGroupInfo(groupId) {
     return this.call('get_group_info', { group_id: Number(groupId) });
   }
@@ -222,9 +255,11 @@ export function forwardIdFromData(d) {
  * resolveReply: async (mid) => { sender, text } | null —— 解析引用原文。
  * resolveAtName: async (qq) => string | null —— 把 @ 的 QQ 号解析成群名片。
  */
-export async function segmentsToText(segments, { resolveReply = null, resolveAtName = null, includeReply = true } = {}) {
+export async function segmentsToText(segments, { resolveReply = null, resolveAtName = null, includeReply = true, messageId = null } = {}) {
   if (typeof segments === 'string') return sanitizeUserText(segments.trim());
   const out = [];
+  // 语音段带消息 id，模型才能用 get_voice_text 按需转写（QQ 自带识别）
+  const midHint = messageId !== null && messageId !== undefined && String(messageId) !== '' ? ` #${messageId}` : '';
   for (const seg of segments ?? []) {
     const d = seg?.data ?? {};
     switch (seg?.type) {
@@ -239,9 +274,9 @@ export async function segmentsToText(segments, { resolveReply = null, resolveAtN
         }
         break;
       }
-      case 'face': out.push(`[表情${d.id ?? ''}]`); break;
+      case 'face': out.push(formatQqFace(d.id)); break;
       case 'image': out.push('[图片]'); break;
-      case 'record': out.push('[语音]'); break;
+      case 'record': out.push(`[语音${midHint}]`); break;
       case 'video': out.push('[视频]'); break;
       case 'file': out.push(`[文件${d.name ?? ''}]`); break;
       case 'reply': {
@@ -282,6 +317,9 @@ export function extractMediaFromSegments(segments) {
     const d = seg.data ?? {};
     if (seg.type === 'image') {
       media.push({ kind: 'image', file: String(d.file ?? ''), url: String(d.url ?? ''), summary: String(d.summary ?? '') });
+    } else if (seg.type === 'record') {
+      // 只留定位信息，不下载音频；转写走 get_voice_text → fetch_ptt_text
+      media.push({ kind: 'record', file: String(d.file ?? ''), url: String(d.url ?? '') });
     } else if (seg.type === 'face') {
       media.push({ kind: 'face', faceId: String(d.id ?? '') });
     }

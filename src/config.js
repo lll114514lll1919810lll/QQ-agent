@@ -21,6 +21,7 @@ export const DEFAULT_CONFIG = {
     model: '',                              // UI 里选择/填写
     provider: '',                           // 当前模型所属提供商（多提供商目录的选中项）
     vision: true,                           // 模型是否支持图片输入（关掉则移除看图工具）
+    thinking: true,                         // 思考开关：开=允许推理并展示思维链；关=请求带 enable_thinking=false，不捕获思维链
     temperature: 0.8,
     maxRounds: 12,                          // 单次运行的最多工具轮数
     timeoutMs: 180000,
@@ -100,6 +101,10 @@ export const DEFAULT_CONFIG = {
       timeoutMs: 20000
     }
   },
+  // 语音转文字（走 SnowLuma fetch_ptt_text，即 QQ 自带识别；按需转写）
+  voice: {
+    enabled: true
+  },
   // 安全例外（默认全部关闭）
   security: {
     allowPrivateImageHosts: false           // true 时图片下载允许内网地址（仅本地测试/自建图床）
@@ -123,6 +128,9 @@ export const DEFAULT_CONFIG = {
   },
   // 用户自定义人设库（保存在配置里，可在设置页添加/选择）
   customPersonas: [],
+  // 分会话人设覆盖：chatKey -> 部分 persona 字段（botName/selfNickname/roleText/participation/customRules）
+  // 例：{ "group:123": { roleText: "……", botName: "小咪", participation: "high" } }
+  chatPersonas: {},
   // 接入白名单
   allow: { groups: [], private: [] },
   deny: { groups: [], private: [] },
@@ -138,6 +146,7 @@ export const DEFAULT_CONFIG = {
     byLengthMs: 20,         // 按字数附加的间隔（毫秒/字）
     maxPerMinute: 80,
     maxPerHour: 500,
+    banCooldownMs: 1800000, // 被 QQ 禁言/风控时暂停该会话发送的时长（默认 30 分钟）
     hardSplitAt: 4000       // QQ 硬限制切分（0 = 不限制）
   },
   // 主动开话题（可选）
@@ -186,6 +195,10 @@ export const DEFAULT_CONFIG = {
   // 被屏蔽群员的消息在入口处直接丢弃——不存档、不触发会话、不作为提示词背景。
   // 机器人自己的消息不受影响。仅群聊有意义（私聊要屏蔽请直接用白名单/黑名单）。
   blocklist: {},
+  // 预算保险丝：今日估算成本达到上限（元）时自动暂停；0 = 不限制
+  budget: {
+    dailyCostYuan: 0
+  },
   // 记忆自动整理：条数超阈值且距上次超过冷却时间时，在运行结束后后台合并/去重/删过时
   memory: {
     consolidateEnabled: true,
@@ -200,6 +213,10 @@ export const DEFAULT_CONFIG = {
     token: '',                // 留空 = 只监听 127.0.0.1
     autoStart: false,         // 开机自启（仅 Electron 桌面端生效）
     closeToTray: true         // 点关闭 = 最小化到托盘
+  },
+  // 匿名用量遥测（installId + token 计数，不含 QQ/群号/内容）；false = 完全不上报
+  telemetry: {
+    enabled: true
   },
   ui: {
     // 主题：'dark' | 'light' | 'system'（system = 跟随系统偏好）。
@@ -292,6 +309,14 @@ export function storeConfigForChat(chatKey) {
   if (pos === undefined || pos === null) return store;
   const { tier, randomPercent } = sliderToTier(Number(pos));
   return { ...store, contextTier: tier, randomPercent };
+}
+
+/** 获取指定会话应使用的人设：全局 persona + chatPersonas 覆盖。 */
+export function personaForChat(chatKey) {
+  const cfg = getConfig();
+  const override = cfg.chatPersonas?.[String(chatKey)];
+  if (!override || typeof override !== 'object') return cfg.persona;
+  return deepMerge(cfg.persona, override);
 }
 
 /** 防抖保存：高频小改动合并写盘。 */

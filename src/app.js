@@ -283,7 +283,12 @@ export function createApp({ log = console.log } = {}) {
   const stickers = new StickerManager(onebot);
   const sender = new SendQueue({
     onebot, store,
-    onSent: ({ chatKey, text }) => log(`[发送 -> ${chatKey}] ${String(text).slice(0, 60)}`)
+    onSent: ({ chatKey, text }) => log(`[发送 -> ${chatKey}] ${String(text).slice(0, 60)}`),
+    // 被 QQ 禁言/风控：推送事件给控制台提示，并记录一条日志
+    onBanned: ({ chatKey, until, reason }) => {
+      log(`[发送 -> ${chatKey}] 被 QQ 限制发言：${reason}`);
+      emit('send-banned', { chatKey, until, reason });
+    }
   });
   const orchestrator = new Orchestrator({ store, memory, stickers, sender, sessions, onebot, emit });
 
@@ -447,7 +452,8 @@ export function createApp({ log = console.log } = {}) {
     if (segments) {
       text = await segmentsToText(segments, {
         resolveReply: (mid) => resolveReply(mid),
-        resolveAtName: (qq) => kind === 'group' ? resolveAtName(id, qq) : null
+        resolveAtName: (qq) => kind === 'group' ? resolveAtName(id, qq) : null,
+        messageId: event.message_id ?? null
       });
     } else {
       text = String(event.raw_message ?? event.message ?? '').trim();
@@ -719,6 +725,7 @@ export function createApp({ log = console.log } = {}) {
             ...snowlumaStatus()
           },
           orchestrator: orchestrator.statusSummary(),
+          bans: sender.listBans(),
           usage,
           cost,
           cacheHitRate: cacheHitRate(usage),
@@ -1172,6 +1179,11 @@ export function createApp({ log = console.log } = {}) {
 
       if (pathname === '/api/config' && method === 'POST') {
         const patch = await readBody(req);
+        // chatPersonas：UI 提交完整映射，删掉的条目必须真的消失 → 走整体替换
+        if (patch && patch.chatPersonas && typeof patch.chatPersonas === 'object'
+          && !('__replace__' in patch.chatPersonas)) {
+          patch.chatPersonas = { __replace__: patch.chatPersonas };
+        }
         const next = updateConfig(patch);
         store.setMaxPerChat(next.store?.maxMessagesPerChat ?? 0);
         if (next.proactive?.enabled) orchestrator.startProactiveLoop(); else orchestrator.stopProactiveLoop();
@@ -1475,6 +1487,14 @@ export function createApp({ log = console.log } = {}) {
         return json(res, 200, { ok: true, paused: orchestrator.paused });
       }
 
+      // 清除某个会话的禁言/风控熔断（用户确认已解禁或想立刻重试）
+      const clearBanMatch = /^\/api\/chats\/(group|private)_(\d+)\/clear-ban$/.exec(pathname);
+      if (clearBanMatch && method === 'POST') {
+        const chatKey = `${clearBanMatch[1]}:${clearBanMatch[2]}`;
+        sender.clearBan(chatKey);
+        return json(res, 200, { ok: true, chatKey, bans: sender.listBans() });
+      }
+
       // 恢复运行，并把所有会话当前未读一次性标记为已读（用户明确选择丢弃积压）
       if (pathname === '/api/pause' && method === 'DELETE') {
         orchestrator.setPaused(false);
@@ -1577,7 +1597,7 @@ export function createApp({ log = console.log } = {}) {
     if (port == null) throw lastError ?? new Error('无法监听端口');
 
     // 匿名用量遥测：启动 90 秒后发第一次，之后每 6 小时一次；失败静默不影响使用
-    startTelemetryLoop(log);
+    if (getConfig().telemetry?.enabled !== false) startTelemetryLoop(log);
 
     // 拉起 SnowLuma（如配置了自动启动）、连 OneBot。
     if (getConfig().snowluma?.autoLaunch) {

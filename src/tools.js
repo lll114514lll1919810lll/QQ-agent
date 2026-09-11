@@ -72,7 +72,7 @@ export function buildToolDefs() {
   return [
     {
       name: 'send_message',
-      description: '发送消息到当前聊天（本工具只能发到本次会话对应的群/私聊）。messages 传字符串=发一条；传字符串数组=分多条发送（推荐，更像真人）。只有需要明确"我回的是哪条"时才传 replyToMessageId 引用；需要点名某人才传 atUserId。不要在字符串内部用空格分句。',
+      description: '发送消息到当前聊天（本工具只能发到本次会话对应的群/私聊）。messages 传字符串=发一条；传字符串数组=分多条发送（推荐，更像真人）。只有需要明确"我回的是哪条"时才传 replyToMessageId 引用；需要点名某人才传 atUserId。不要在字符串内部用空格分句。想在同一气泡混入 QQ 官方表情，可在文本里直接写 [QQ表情:流泪(#5)] 这样的标记。',
       parameters: {
         type: 'object',
         properties: {
@@ -368,6 +368,29 @@ export function buildToolDefs() {
           return { content: imageParts(`消息 ${args.messageId} 的图片内容${note}：`, dataUrls) };
         } catch (error) {
           return err(error?.message ?? error);
+        }
+      }
+    },
+    {
+      name: 'get_voice_text',
+      description: '把一条语音消息转成文字（调用 QQ 自带语音识别）。消息文本里出现 [语音 #数字] 时用它；转写失败或没有识别结果时会说明原因，不要编造语音内容。',
+      parameters: {
+        type: 'object',
+        properties: { messageId: { type: ['integer', 'string'], description: '语音消息的 QQ 消息 id（聊天记录里 [语音 #数字] 里的数字）' } },
+        required: ['messageId']
+      },
+      async execute(ctx, args) {
+        try {
+          const entry = ctx.store.findByMid(ctx.chatKey, args.messageId);
+          if (!entry) return err(`当前会话找不到消息 ${args.messageId}。${midHint(ctx)}`);
+          const hasVoice = (entry.media || []).some((m) => m.kind === 'record') || /\[语音/.test(entry.text || '');
+          if (!hasVoice) return err(`消息 ${args.messageId} 不是语音消息`);
+          const data = await ctx.onebot.getVoiceText(args.messageId);
+          const text = String(data?.text ?? '').trim();
+          if (!text) return ok({ messageId: String(args.messageId), text: '', note: '这条语音没有识别出文字（可能是 QQ 未转写、时长过短/过长，或为纯音乐）。不要编造内容。' });
+          return ok({ messageId: String(args.messageId), text });
+        } catch (error) {
+          return err(`语音转文字失败：${error?.message ?? error}`);
         }
       }
     },
